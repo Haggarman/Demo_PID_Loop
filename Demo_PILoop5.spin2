@@ -1,0 +1,192 @@
+''01/17/2022
+''rewired to use adafruit DRV8833
+''for what it's worth, it's now much less sample time dependent.
+''mess with PILOOP_SAMPLES_Hz and speed setpoint
+''speed command target_speed_f is now in [motor revolutions per second]
+''re-enabled tracking time constant after bug discovered by setting a negative literal value in a pub section.
+''as workaround, use the constant "TARGET_SPEED_FLOAT" to change desired motor speed.
+''ramp up and down. encoder has more smoothing (at the cost of lag)
+''create a PILoop object
+''run all 4 motors at the same time
+
+CON { timing }
+
+  CLK_FREQ = 200_000_000                                ' system freq as a constant
+  BR_TERM  = 230_400                                    ' terminal baud rate
+
+  _clkfreq = CLK_FREQ                                   ' set system clock
+
+CON { fixed io pins }
+
+  RX1      = 63  { I }                                  ' programming / debug
+  TX1      = 62  { O }
+
+  SF_CS    = 61  { O }                                  ' serial flash
+  SF_SCK   = 60  { O }
+  SF_SDO   = 59  { O }
+  SF_SDI   = 58  { I }
+
+  SD_SCK   = 61  { O }                                  ' sd card
+  SD_CS    = 60  { O }
+  SD_SDI   = 59  { O }
+  SD_SDO   = 58  { I }
+
+  'SDA1     = 57  { IO }                                ' i2c (optional)
+  'SCL1     = 56  { IO }
+
+  LED_user2 = 57
+  LED_user1 = 56
+
+CON { pin offsets }
+  HBRIDGE_NFault = 0  { IO }                            'open drain pulls down when fault
+  HBRIDGE_Enable = 1  { O }
+  HBRIDGE_AIN_1 =  2  { O }
+  HBRIDGE_AIN_2 =  3  { O }
+  HBRIDGE_BIN_2 =  4  { O }
+  HBRIDGE_BIN_1 =  5  { O }
+
+  RIGHT_MOTORS =   0
+  LEFT_MOTORS =   16
+
+CON { app io pins }
+  LEFT_MOTORS_FAULT = LEFT_MOTORS + HBRIDGE_NFault
+  LEFT_MOTORS_ENABLE = LEFT_MOTORS + HBRIDGE_Enable
+
+  LEFT_REAR_FWD = LEFT_MOTORS + HBRIDGE_AIN_1
+  LEFT_REAR_REV = LEFT_MOTORS + HBRIDGE_AIN_2
+  LEFT_REAR_ENCA = 8
+  LEFT_REAR_ENCB = 9
+
+
+  LEFT_FRONT_FWD = LEFT_MOTORS + HBRIDGE_BIN_1
+  LEFT_FRONT_REV = LEFT_MOTORS + HBRIDGE_BIN_2
+  LEFT_FRONT_ENCA = 10
+  LEFT_FRONT_ENCB = 11
+
+
+  RIGHT_MOTORS_FAULT = RIGHT_MOTORS + HBRIDGE_NFault
+  RIGHT_MOTORS_ENABLE = RIGHT_MOTORS + HBRIDGE_Enable
+
+  RIGHT_REAR_FWD = RIGHT_MOTORS + HBRIDGE_AIN_2
+  RIGHT_REAR_REV = RIGHT_MOTORS + HBRIDGE_AIN_1
+  RIGHT_REAR_ENCB = 12
+  RIGHT_REAR_ENCA = 13
+
+  RIGHT_FRONT_FWD = RIGHT_MOTORS + HBRIDGE_BIN_2
+  RIGHT_FRONT_REV = RIGHT_MOTORS + HBRIDGE_BIN_1
+  RIGHT_FRONT_ENCB = 14
+  RIGHT_FRONT_ENCA = 15
+
+
+CON { user }
+  AXIS_COUNT = 4               'number of motors
+  MOTORS_PWM_Hz = 5000          'the pwm motor frequency
+
+  PILOOP_SAMPLES_Hz = 20        'TRY 5, 10, 20, 50. it should be better behaved.
+  PILOOP_WAIT_COUNT = CLK_FREQ / PILOOP_SAMPLES_Hz
+
+  SPEED_AT_FULL_PWM = 160        'motor conversion factor speed command to PWM (Make it a speed reachable at 100% PWM in practice. Reduce from measured freewheel speed somewhat to include some expected load.)
+
+  K_Val = 2.5     'Increasing this Proportional value pushes back harder and harder against error. 1.0 is unity, so one unit of error produces one unit of pushback.
+  P_Weight = 0.55 'Optional Weighting value, leave at 1.0 for normal PID overshoot type behavior. A value like 0.5 significantly reduces initial overshoot, but only after correct tuning of K and I.
+  I_Val = 2.0     'Increasing this value makes the Integration effect stronger, but more likely to cause oscillation. Too small and you never reach setpoint. This is technically 1/I from textbook definition.
+  TrackTC = 2.0   'Anti-windup filter "time constant" to saturate Integrator . It is the same time unit as your process value (seconds). Higher values allow more Integrator windup (which is bad).
+
+CON {settings}
+  TARGET_SPEED_FLOAT = 100.0      'motor [rev/sec] SPEED SETPOINT. Ranges from about -20.0 to -160.0 and 20.0 to 160.0 (static friction break requires some deadzone, it'll be start-stop below 20.0).
+
+OBJ
+  MOT[AXIS_COUNT] : "Motor_DRV8833.spin2"
+  ENC[AXIS_COUNT] : "Motor_ABEncoder3.spin2"
+  PID[AXIS_COUNT] : "Motor_PILoop.spin2"
+
+PUB MAIN() | waitForCnt, add_f, target_speed_f, actual_speed_f[4], command_pwm[4]
+  pinlow(LED_user1)
+
+  ''Initialization of the motors and encoders:
+  pullup(LEFT_MOTORS_FAULT, P_HIGH_15K)
+  pullup(RIGHT_MOTORS_FAULT, P_HIGH_15K)
+  waitms(100)
+  pinhigh(LED_user1)
+  MOT[0].start(LEFT_REAR_FWD, LEFT_REAR_REV, MOTORS_PWM_Hz)
+  MOT[1].start(LEFT_FRONT_FWD, LEFT_FRONT_REV, MOTORS_PWM_Hz)
+  MOT[2].start(RIGHT_REAR_FWD, RIGHT_REAR_REV, MOTORS_PWM_Hz)
+  MOT[3].start(RIGHT_FRONT_FWD, RIGHT_FRONT_REV, MOTORS_PWM_Hz)
+
+  ENC[0].start(LEFT_REAR_ENCA, LEFT_REAR_ENCB, 4, CLK_FREQ)
+  ENC[1].start(LEFT_FRONT_ENCA, LEFT_FRONT_ENCB, 4, CLK_FREQ)
+  ENC[2].start(RIGHT_REAR_ENCA, RIGHT_REAR_ENCB, 4, CLK_FREQ)
+  ENC[3].start(RIGHT_FRONT_ENCA, RIGHT_FRONT_ENCB, 4, CLK_FREQ)
+
+  PID[0].start(PILOOP_SAMPLES_Hz, MOT.PWM_REF_MAX, SPEED_AT_FULL_PWM)
+  PID[1].start(PILOOP_SAMPLES_Hz, MOT.PWM_REF_MAX, SPEED_AT_FULL_PWM)
+  PID[2].start(PILOOP_SAMPLES_Hz, MOT.PWM_REF_MAX, SPEED_AT_FULL_PWM)
+  PID[3].start(PILOOP_SAMPLES_Hz, MOT.PWM_REF_MAX, SPEED_AT_FULL_PWM)
+
+  waitms(100)
+  pinlow(LED_user1)
+  pinhigh(LEFT_MOTORS_ENABLE)
+  pinhigh(RIGHT_MOTORS_ENABLE)
+
+
+  ''Some commented out code here for open-loop speed measurement:
+  'target_pwm := -MOT1.PWM_REF_MAX / 2                    '50 percent
+  'MOT1.setpwm(target_pwm)
+  'waitms(100)
+  'openloop()
+
+  'debug(`SCOPE MyScope SIZE 800 600 SAMPLES 128)
+  'debug(`MyScope 'PWM' 0 10000 500 10 %1111)
+  'debug(`MyScope 'Speed' 0 160 500 20 %1111)
+  'debug(`MyScope 'Setpoint' 0 160 500 20 %1111)
+
+  ''PI Controller Loop Initialization:
+  waitForCnt := getct() + PILOOP_WAIT_COUNT
+  actual_speed_f[0] := ENC[0].update()
+  actual_speed_f[1] := ENC[1].update()
+  actual_speed_f[2] := ENC[2].update()
+  actual_speed_f[3] := ENC[3].update()
+
+  target_speed_f := TARGET_SPEED_FLOAT
+  add_f := 0.75
+  repeat
+    ''Ramp speed up and down (just as a test)
+    target_speed_f := target_speed_f +. add_f
+    if target_speed_f >. 150.0
+      add_f := 0.0 -. add_f
+    elseif target_speed_f <. -.150.0
+      add_f := 0.0 -. add_f
+
+    ''wait until next loop update
+    waitct(waitForCnt += PILOOP_WAIT_COUNT)
+    actual_speed_f[0] := ENC[0].update()
+    actual_speed_f[1] := ENC[1].update()
+    actual_speed_f[2] := ENC[2].update()
+    actual_speed_f[3] := ENC[3].update()
+
+    command_pwm[0] := PID[0].update(target_speed_f, actual_speed_f[0] )
+    command_pwm[1] := PID[1].update(target_speed_f, actual_speed_f[1] )
+    command_pwm[2] := PID[2].update(target_speed_f, actual_speed_f[2] )
+    command_pwm[3] := PID[3].update(target_speed_f, actual_speed_f[3] )
+
+    MOT[0].setpwm(command_pwm[0] )
+    MOT[1].setpwm(command_pwm[1] )
+    MOT[2].setpwm(command_pwm[2] )
+    MOT[3].setpwm(command_pwm[3] )
+
+
+PUB openloop(MY_AXIS) | waitForCnt, actual_speed_f, debug1
+''this just reports the current speed in a loop
+  waitForCnt := getct() + PILOOP_WAIT_COUNT
+  repeat
+    actual_speed_f := ENC[MY_AXIS].update()
+    debug1 := round(actual_speed_f)
+    debug(sdec(debug1))
+    waitct(waitForCnt += PILOOP_WAIT_COUNT)
+
+
+PUB pullup(pinfield, type)
+''pinfield = just a single pin number, or the field of pins which is a starting pin and the quantity of pins after it.
+''type = [P_HIGH_FAST, P_HIGH_1K5, P_HIGH_15K, P_HIGH_150K, P_HIGH_1MA, P_HIGH_100UA, P_HIGH_10UA, P_HIGH_FLOAT]
+  wrpin(pinfield, type)
+  pinhigh(pinfield)
