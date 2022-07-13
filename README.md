@@ -1,11 +1,10 @@
 # Demo_PID_Loop
  DRV8833 PI controller for Parallax Propeller 2
+![VideoCapture1](https://user-images.githubusercontent.com/96515734/178653988-32f38e5f-09a4-492c-bb37-8046ce05a88b.jpg)
 
 Compile Demo_PILoop5.spin2 as the top file.
 
-───────────────────────────────────────
 Parallax Propeller Chip Project Archive
-───────────────────────────────────────
 
  Project :  "Demo_PILoop5"
 
