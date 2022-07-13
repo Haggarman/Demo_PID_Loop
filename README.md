@@ -6,6 +6,7 @@ Quadrature encoder feedback
 
 #### Shown here running 4 motors on an OSOYOO V1 Mecanum Wheel Metal Chassis.
 ![VideoCapture1](https://user-images.githubusercontent.com/96515734/178653988-32f38e5f-09a4-492c-bb37-8046ce05a88b.jpg)
+https://osoyoo.com/?p=30765
 
 ## Software Instructions
 Review and adjust pin usage.  
